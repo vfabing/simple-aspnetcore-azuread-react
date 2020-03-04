@@ -1,10 +1,18 @@
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.AzureAD.UI;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpsPolicy;
+using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.AspNetCore.SpaServices.ReactDevelopmentServer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using System;
 
 namespace simple_aspnetcore_azuread_react
 {
@@ -21,12 +29,51 @@ namespace simple_aspnetcore_azuread_react
         public void ConfigureServices(IServiceCollection services)
         {
 
-            services.AddControllersWithViews();
+            ConfigureAuthentication(services);
 
             // In production, the React files will be served from this directory
             services.AddSpaStaticFiles(configuration =>
             {
                 configuration.RootPath = "ClientApp/build";
+            });
+        }
+
+        private static readonly string CustomApiScheme = "CustomApiScheme";
+
+        private void ConfigureAuthentication(IServiceCollection services)
+        {
+            services.AddAuthentication(options =>
+            {
+                options.DefaultAuthenticateScheme = AzureADDefaults.CookieScheme;
+                options.DefaultChallengeScheme = CustomApiScheme;
+                options.DefaultSignInScheme = AzureADDefaults.CookieScheme;
+            })
+            .AddAzureAD(options =>
+            {
+                Configuration.Bind("AzureAd", options);
+            })
+            .AddScheme<AuthenticationSchemeOptions, CustomApiAuthenticationHandler>(CustomApiScheme, options => { });
+
+            services.Configure<CookieAuthenticationOptions>(AzureADDefaults.CookieScheme, options =>
+            {
+                options.Cookie.HttpOnly = true;
+                options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+                options.Cookie.SameSite = SameSiteMode.Lax;
+                options.Cookie.MaxAge = new TimeSpan(7, 0, 0, 0);
+            });
+
+            services.Configure<OpenIdConnectOptions>(AzureADDefaults.OpenIdScheme, options =>
+            {
+                options.Authority = options.Authority + "/v2.0/";         // Microsoft identity platform
+                options.TokenValidationParameters.ValidateIssuer = false; // accept several tenants (here simplified)
+            });
+
+            services.AddControllersWithViews(options =>
+            {
+                var policy = new AuthorizationPolicyBuilder()
+                    .RequireAuthenticatedUser()
+                    .Build();
+                options.Filters.Add(new AuthorizeFilter(policy));
             });
         }
 
@@ -49,6 +96,9 @@ namespace simple_aspnetcore_azuread_react
             app.UseSpaStaticFiles();
 
             app.UseRouting();
+
+            app.UseAuthentication();
+            app.UseAuthorization();
 
             app.UseEndpoints(endpoints =>
             {
